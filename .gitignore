@@ -2,3 +2,9 @@ goal.txt
 test.py
 example-code.txt
 cred.py
+__pycache__/
+.venv/
+.env
+.env.*
+!.env.example
+.vercel/

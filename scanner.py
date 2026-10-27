@@ -1,94 +1,92 @@
-import requests
+﻿"""Shared URL scoring and VirusTotal scanner for CLI and web."""
+import os
 import time
-import cred
+from urllib.parse import urlsplit, urlunsplit
+import requests
 
-#  API = "API_KEY"
+class ScanError(ValueError):
+    pass
 
-
-def url_rep(url): # URL Rep scanner
-
-    score = 0
-    url = url.lower()
-    keywords = ["login", "verify", "update", "secure", "account", "bank"]
-    shorteners = ["bit.ly", "tinyurl", "t.co", "is.gd"]
-
-    if not url.startswith("https://"):
-        score += 20
-
-    for clues in keywords:
-        if clues in url:
-            score+=10
-
-    for short in shorteners:
-        if short in url:
-            score +=15
-
+def assess_url(value):
+    value = value.strip()
+    if not value or len(value) > 4096 or any(c.isspace() or ord(c) < 32 for c in value):
+        raise ScanError('Enter a URL without spaces, up to 4096 characters.')
+    if '://' not in value:
+        value = 'https://' + value
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname
+        port = parts.port
+        if parts.scheme not in ('http', 'https') or not host:
+            raise ValueError()
+        host.encode('idna')
+        if parts.username is not None or parts.password is not None:
+            raise ValueError()
+    except (ValueError, UnicodeError):
+        raise ScanError('Enter a valid HTTP or HTTPS URL without embedded credentials.')
+    url = urlunsplit((parts.scheme, parts.netloc, parts.path or '/', parts.query, ''))
+    host = host.lower()
+    reasons = []
+    if parts.scheme != 'https':
+        reasons.append(('Connection uses HTTP instead of HTTPS', 20))
+    for word in ('login', 'verify', 'update', 'secure', 'account', 'bank'):
+        if word in url.lower():
+            reasons.append((f"URL contains '{word}'", 10))
+    if any(host == s or host.endswith('.' + s) for s in ('bit.ly', 'tinyurl.com', 'tinyurl', 't.co', 'is.gd')):
+        reasons.append(('Known URL shortening service', 15))
     if len(url) > 75:
-        score += 10
+        reasons.append(('URL is longer than 75 characters', 10))
+    if any(c.isdigit() for c in host):
+        reasons.append(('Hostname contains numbers', 25))
+    score = min(sum(points for _, points in reasons), 100)
+    return dict(url=url, score=score, level='high' if score >= 70 else 'medium' if score >= 40 else 'low',
+                reasons=[dict(label=label, points=points) for label, points in reasons])
 
-    if any(char.isdigit() for char in url.split("//")[-1].split("/")[0]):
-        score += 25
+def url_rep(url):
+    return assess_url(url)['score']
 
-    if score > 100: # just a limit cap
-        score = 100
-    return score
+def scan_url(value, api_key=None, max_wait=45):
+    result = assess_url(value)
+    key = api_key or os.environ.get('VT_API_KEY')
+    result.update(stats=None, notice=None)
+    if not key:
+        result['notice'] = 'VirusTotal is not configured. Showing custom rules only.'
+        return result
+    def request(method, endpoint, **kwargs):
+        try:
+            response = requests.request(method, 'https://www.virustotal.com/api/v3/' + endpoint,
+                                        headers={'x-apikey': key}, timeout=15, **kwargs)
+            response.raise_for_status()
+            return response.json()['data']
+        except requests.HTTPError as exc:
+            message = {401: 'VirusTotal API key is invalid.', 403: 'VirusTotal access denied.',
+                       429: 'VirusTotal rate limit reached. Try again later.'}.get(exc.response.status_code, 'VirusTotal returned an error.')
+            raise ScanError(message) from exc
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            raise ScanError('Could not read a response from VirusTotal. Try again later.') from exc
+    try:
+        analysis = request('POST', 'urls', data={'url': result['url']})
+        deadline = time.monotonic() + max_wait
+        while time.monotonic() < deadline:
+            attributes = request('GET', 'analyses/' + analysis['id'])['attributes']
+            if attributes.get('status') == 'completed':
+                result['stats'] = attributes['stats']
+                return result
+            time.sleep(min(5, max(0, deadline - time.monotonic())))
+        raise ScanError('VirusTotal analysis is still pending. Try again shortly.')
+    except (ScanError, KeyError) as exc:
+        result['notice'] = str(exc) if isinstance(exc, ScanError) else 'Incomplete response from VirusTotal.'
+    return result
 
+def main():
+    try:
+        result = scan_url(input('Enter URL: '))
+        print(f"Custom risk: {result['score']}/100 ({result['level']})")
+        for reason in result['reasons']:
+            print(f"+{reason['points']} {reason['label']}")
+        print(result['notice'] or result['stats'])
+    except (ScanError, EOFError) as exc:
+        print(exc)
 
-features = int(input("OPTIONS:\n1. Scan URL \n2. Scan IP reputation \nEnter: "))
-
-match features:
-    case 1:
-        url = input("Enter URL: ")
-        score = url_rep(url)
-        api_url = "https://www.virustotal.com/api/v3/urls"
-
-        headers={
-            "x-apikey": cred.API  #Change cred.API to API var
-        }
-
-        data = {
-            "url":url
-        }
-
-        response = requests.post(api_url, headers=headers, data=data)
-
-        result = response.json()
-
-        scan_id = result["data"]["id"]
-
-        result_url = f"https://www.virustotal.com/api/v3/analyses/{scan_id}"
-
-
-        while True: #Scan completion timer
-            scan_result = requests.get(result_url, headers=headers)
-            scan_data = scan_result.json()
-
-            status = scan_data["data"]["attributes"]["status"]
-
-            if status == "completed":
-                break
-
-            print("Scanning... waiting 5 seconds")
-            time.sleep(5)
-
-
-        stats = scan_data["data"]["attributes"]["stats"]
-
-        print("\n===== URL Reputation =====")
-        print(f"Risk Score: {score}")
-        if score >= 70:
-            print("⚠ HIGH RISK (Possible phishing)")
-        elif score >= 40:
-            print("⚠ MEDIUM RISK (Suspicious)")
-        else:
-             print("✔ LOW RISK (Seems safe)")
-
-        print("\n===== RESULTS =====")
-        print("Malicious :", stats["malicious"])
-        print("Suspicious:", stats["suspicious"])
-        print("Harmless  :", stats["harmless"])
-        print("Undetected:", stats["undetected"])
-    
-    case 2: 
-        print("\n Still underdevelopment")
-
+if __name__ == '__main__':
+    main()
