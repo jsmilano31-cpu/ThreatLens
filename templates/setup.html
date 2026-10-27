@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block title %}Complete setup · ThreatLens{% endblock %}
+{% block content %}
+<main class="dashboard">
+  <p class="eyebrow">THREATLENS / FIRST-TIME SETUP</p>
+  <h1>One step <span>to go.</span></h1>
+  <section class="scan-card">
+    <h2>First-time setup</h2>
+    <p class="muted">ThreatLens is running. Configure the login before opening your analyst workspace.</p>
+    <div class="alert" role="status">Missing settings: {% for name in missing_settings %}<code>{{ name }}</code>{{ ', ' if not loop.last else '' }}{% endfor %}</div>
+    <ol class="muted">
+      <li>Open your Vercel project, then Settings → Environment Variables.</li>
+      <li>Set <code>SECRET_KEY</code> to a long random secret and <code>THREATLENS_PASSWORD</code> to your demo password. Select Production and Preview.</li>
+      <li>Redeploy the project, then sign in as <code>analyst</code> or your configured <code>THREATLENS_USERNAME</code>.</li>
+    </ol>
+    <p class="small muted">A VirusTotal API key is optional. Local scoring and all demonstration examples work without it. No database is needed.</p>
+  </section>
+</main>
+{% endblock %}

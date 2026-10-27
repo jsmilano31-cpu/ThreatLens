@@ -1,6 +1,9 @@
 ﻿import unittest
 from unittest.mock import patch, Mock
 import json
+import os
+import subprocess
+import sys
 from html.parser import HTMLParser
 import requests
 from werkzeug.security import generate_password_hash
@@ -142,9 +145,35 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'Investigate a URL', second.get('/', base_url='https://demo.example').data)
 
     @patch.dict('os.environ', {'VERCEL': '1'}, clear=True)
-    def test_vercel_requires_shared_secret(self):
-        with self.assertRaisesRegex(RuntimeError, 'SECRET_KEY'):
-            create_app()
+    def test_vercel_missing_configuration_serves_setup_without_session(self):
+        client = create_app({'TESTING': True}).test_client()
+        for path in ('/', '/login'):
+            response = client.get(path, base_url='https://demo.example')
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b'First-time setup', response.data)
+            self.assertIn(b'SECRET_KEY', response.data)
+            self.assertIn(b'THREATLENS_PASSWORD', response.data)
+            self.assertNotIn('Set-Cookie', response.headers)
+        with client.get('/static/style.css') as stylesheet:
+            self.assertEqual(stylesheet.status_code, 200)
+
+    @patch.dict('os.environ', {'VERCEL': '1', 'THREATLENS_PASSWORD': 'test-password'}, clear=True)
+    def test_vercel_password_without_secret_does_not_enable_login(self):
+        client = create_app({'TESTING': True}).test_client()
+        response = client.post('/login', data={'username': 'analyst', 'password': 'test-password'})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'Missing settings: <code>SECRET_KEY</code>', response.data)
+        self.assertNotIn('Set-Cookie', response.headers)
+
+    def test_vercel_entrypoint_imports_with_no_secrets(self):
+        environment = dict(os.environ, VERCEL='1')
+        environment.pop('SECRET_KEY', None)
+        environment.pop('THREATLENS_PASSWORD', None)
+        process = subprocess.run([sys.executable, '-c',
+            "from app import app; response = app.test_client().get('/'); "
+            "assert response.status_code == 200; assert b'First-time setup' in response.data"],
+            env=environment, capture_output=True, text=True)
+        self.assertEqual(process.returncode, 0, process.stderr)
 
 class ScannerTests(unittest.TestCase):
     def test_components_and_stable_rules(self):

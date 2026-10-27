@@ -97,7 +97,9 @@ API integration follows the [VirusTotal URL submission](https://docs.virustotal.
 
 `app.py` exports the Flask application for Vercel. `.python-version` selects Python 3.12. `vercel.json` allows up to 120 seconds per request; the scanner polls for up to 45 seconds after submission, with 15-second request timeouts. Pending, rate-limited, or failed VirusTotal scans show local scores with an explicit notice. No synthetic vendor verdicts are generated.
 
-Login uses signed browser cookies and environment-configured credentials. No database, external session store, or file writes are needed. Vercel automatically enables Secure cookies. A persistent `SECRET_KEY` is required there so login works across serverless instances; the app fails at startup if it is absent. Local development can still use a generated session secret.
+Login uses signed browser cookies and environment-configured credentials. No database, external session store, or file writes are needed. Vercel automatically enables Secure cookies. A persistent `SECRET_KEY` is required there so login works across serverless instances. If it or the login password is absent, the app starts and shows a setup page while keeping the analyst workspace closed. Local development can still use a generated session secret.
+
+If Vercel shows `500 FUNCTION_INVOCATION_FAILED`, inspect its runtime logs. Earlier versions crashed during import when `SECRET_KEY` was missing. The setup page now identifies missing settings. Add the variables to Production and Preview, then redeploy; saved environment changes do not alter an existing deployment.
 
 `.env.example` lists configuration names only; do not upload real credentials. `.vercelignore` excludes local environments, credentials, and tests from deployment. This repo is prepared for deployment; deploying still requires access to your Vercel account.
 

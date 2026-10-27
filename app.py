@@ -18,8 +18,6 @@ def create_app(test_config=None):
     password = os.environ.get('THREATLENS_PASSWORD')
     on_vercel = os.environ.get('VERCEL') == '1'
     secret = os.environ.get('SECRET_KEY')
-    if on_vercel and not secret:
-        raise RuntimeError('Set SECRET_KEY in Vercel environment variables before deploying.')
     app.config.update(SECRET_KEY=secret or secrets.token_hex(32),
         USERNAME=os.environ.get('THREATLENS_USERNAME', 'analyst'),
         PASSWORD_HASH=generate_password_hash(password) if password else None,
@@ -28,9 +26,20 @@ def create_app(test_config=None):
         PERMANENT_SESSION_LIFETIME=timedelta(hours=2), MAX_CONTENT_LENGTH=16384)
     if test_config:
         app.config.update(test_config)
+    missing_settings = []
+    if on_vercel and not secret and not (test_config and test_config.get('SECRET_KEY')):
+        missing_settings.append('SECRET_KEY')
+    if not app.config['PASSWORD_HASH']:
+        missing_settings.append('THREATLENS_PASSWORD')
 
     @app.before_request
     def protect_forms():
+        if request.endpoint == 'static':
+            return None
+        # Keep an incomplete deployment available without enabling login or
+        # issuing sessions signed by a different random key on every instance.
+        if missing_settings and request.endpoint in ('login', 'dashboard', 'logout'):
+            return render_template('setup.html', missing_settings=missing_settings)
         if 'csrf' not in session:
             session['csrf'] = secrets.token_hex(32)
         if request.method == 'POST' and not hmac.compare_digest(session['csrf'], request.form.get('csrf', '')):
