@@ -34,6 +34,30 @@ CLI remains available:
 - VirusTotal submission and bounded polling, request timeouts, rate-limit and API error messages. API credentials stay on the server.
 - Vendor counts shown separately from rule scores. Undetected means no opinion, not safe. Failed or pending vendor scans retain local scoring and show an explicit notice.
 - No scan history is persisted. Submitted URLs are rendered as text rather than clickable links. The app does not fetch the target URL itself.
+- Link Detective: URL anatomy with highlighted rule signals and plain-language explanations.
+- Separate what-if simulation with rule toggles and Reset; the original score and vendor evidence remain visible.
+- Three local-only fictional examples and browser-generated JSON reports.
+
+## Present Link Detective
+
+1. Sign in and choose **Stacked signals** under **Start with a case**. The example scores 100/100 from 105 raw points. Examples always run locally, even with an API key configured.
+2. Inspect **URL anatomy** to see how protocol, hostname, port, path, and query relate to the triggered rules. An explicit port is shown only when supplied.
+3. Under **What changes the score?**, uncheck HTTP. The simulated score becomes 85, while the original stays 100. Use **Reset all rules** to restore the simulation.
+4. Select **Download JSON report** to save the original findings, timestamp, URL components, rule explanations, VirusTotal status/results, and a separate snapshot of the current simulation.
+
+The other fictional cases score 0 (**Quiet link**) and 40 (**Look closer**). All use reserved `.example` domains. These are educational heuristic examples, not known malicious websites.
+
+For your own URLs, choose **Local rules only** for immediate scoring without external requests. **Analyze with VirusTotal** uses the existing API integration and requires the consent checkbox. Without a key, it falls back to local rules with an explicit notice.
+
+Simulation toggles exclude rules from a calculation; they do not edit the URL or rescan the website. A lower simulated score does not make the link safer. Keyword, length, and number rules can also flag legitimate URLs.
+
+JSON downloads are created in your browser. Nothing is saved on the server or in a database. Reports contain the submitted URL, including its query, so remove sensitive information before analyzing or sharing a report. Simulation and download controls require JavaScript; ordinary analysis and examples work without it.
+
+### Extending the core
+
+`assess_url()` and `scan_url()` retain their existing score, level, URL, and reason fields. Assessments also include `analyzed_at` (UTC ISO timestamp) and `components`. Each rule reason has a stable `id`, `explanation`, and list of affected component names in addition to its original `label` and `points`.
+
+Add a scoring signal through the helper inside `assess_url()` using a unique ID, points, explanation, and affected components. Anatomy, simulation, and report export consume that metadata automatically. `url_rep()` still returns only the numeric score.
 
 VirusTotal receives submitted URLs when an API key is set. Remove private links, tokens, and sensitive information before submission. The form asks for acknowledgement before scanning. Polling is synchronous and can occupy one request for roughly a minute, plus in-flight request timeouts. Free API quotas can be reached during polling.
 
@@ -41,15 +65,16 @@ VirusTotal receives submitted URLs when an API key is set. Remove private links,
 
 ```powershell
 .venv\Scripts\python.exe -m unittest discover -s tests -v
+node --test tests/test_simulation.cjs
 ```
 
-Tests mock VirusTotal; no real API calls or API keys are needed.
+Python tests mock VirusTotal; no real API calls or API keys are needed. Optional Node tests use the built-in test runner to check browser calculations and report contents against real Python assessments. Node is a development check only, not a runtime dependency.
 
 ## Suggested next functions
 
 1. Background scan jobs with quota-aware polling and retry, so requests remain responsive.
 2. A documented, calibrated rule system with configurable weights and additional punycode/IP-address indicators.
-3. Downloadable JSON/CSV reports without requiring a database.
+3. CSV report exports in addition to the included JSON download.
 4. Domain and IP reputation using dedicated VirusTotal endpoints.
 5. Database-backed accounts and scan history when moving beyond the single-account v1.
 
@@ -57,7 +82,7 @@ API integration follows the [VirusTotal URL submission](https://docs.virustotal.
 
 ## Deploy the demo on Vercel (no database)
 
-1. Push this project to your GitHub repository, then import `Kluuuz/ThreatLens` in Vercel.
+1. Push this project to your GitHub repository, then import `jsmilano31-cpu/ThreatLens` in Vercel.
 2. Root Directory: repository root (`.`), where `app.py` and `vercel.json` live. Framework Preset: Flask. Leave build and output overrides unset.
 3. Add environment variables for both Preview and Production before deploying:
 

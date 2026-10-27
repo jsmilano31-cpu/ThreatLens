@@ -1,6 +1,7 @@
 ﻿"""Shared URL scoring and VirusTotal scanner for CLI and web."""
 import os
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlsplit, urlunsplit
 import requests
 
@@ -26,21 +27,36 @@ def assess_url(value):
         raise ScanError('Enter a valid HTTP or HTTPS URL without embedded credentials.')
     url = urlunsplit((parts.scheme, parts.netloc, parts.path or '/', parts.query, ''))
     host = host.lower()
+    components = dict(protocol=parts.scheme, hostname=host, port=port,
+                      path=parts.path or '/', query=parts.query)
     reasons = []
+
+    def signal(rule_id, label, points, explanation, affected):
+        reasons.append(dict(id=rule_id, label=label, points=points,
+                            explanation=explanation, components=affected))
+
     if parts.scheme != 'https':
-        reasons.append(('Connection uses HTTP instead of HTTPS', 20))
+        signal('http', 'Connection uses HTTP instead of HTTPS', 20,
+               'HTTP does not encrypt the connection. HTTPS alone would not prove a site is trustworthy.', ['protocol'])
     for word in ('login', 'verify', 'update', 'secure', 'account', 'bank'):
         if word in url.lower():
-            reasons.append((f"URL contains '{word}'", 10))
+            affected = [name for name, value in components.items() if word in str(value or '').lower()]
+            signal('keyword_' + word, f"URL contains '{word}'", 10,
+                   'Account-related wording can appear in phishing lures and legitimate websites. Check the context.', affected)
     if any(host == s or host.endswith('.' + s) for s in ('bit.ly', 'tinyurl.com', 'tinyurl', 't.co', 'is.gd')):
-        reasons.append(('Known URL shortening service', 15))
+        signal('shortener', 'Known URL shortening service', 15,
+               'A shortened link hides its eventual destination. This scanner does not follow redirects.', ['hostname'])
     if len(url) > 75:
-        reasons.append(('URL is longer than 75 characters', 10))
+        signal('long_url', 'URL is longer than 75 characters', 10,
+               'Long URLs can obscure important details, but legitimate links can also be long.',
+               [name for name, value in components.items() if value is not None and value != ''])
     if any(c.isdigit() for c in host):
-        reasons.append(('Hostname contains numbers', 25))
-    score = min(sum(points for _, points in reasons), 100)
+        signal('numeric_hostname', 'Hostname contains numbers', 25,
+               'Numbers can be used in lookalike names or address-based URLs. They are also common in legitimate domains.', ['hostname'])
+    score = min(sum(reason['points'] for reason in reasons), 100)
     return dict(url=url, score=score, level='high' if score >= 70 else 'medium' if score >= 40 else 'low',
-                reasons=[dict(label=label, points=points) for label, points in reasons])
+                reasons=reasons, components=components,
+                analyzed_at=datetime.now(timezone.utc).isoformat())
 
 def url_rep(url):
     return assess_url(url)['score']
@@ -48,8 +64,9 @@ def url_rep(url):
 def scan_url(value, api_key=None, max_wait=45):
     result = assess_url(value)
     key = api_key or os.environ.get('VT_API_KEY')
-    result.update(stats=None, notice=None)
+    result.update(stats=None, notice=None, analysis_mode='virustotal', virustotal_status='unavailable')
     if not key:
+        result['virustotal_status'] = 'not_configured'
         result['notice'] = 'VirusTotal is not configured. Showing custom rules only.'
         return result
     def request(method, endpoint, **kwargs):
@@ -71,8 +88,10 @@ def scan_url(value, api_key=None, max_wait=45):
             attributes = request('GET', 'analyses/' + analysis['id'])['attributes']
             if attributes.get('status') == 'completed':
                 result['stats'] = attributes['stats']
+                result['virustotal_status'] = 'completed'
                 return result
             time.sleep(min(5, max(0, deadline - time.monotonic())))
+        result['virustotal_status'] = 'pending'
         raise ScanError('VirusTotal analysis is still pending. Try again shortly.')
     except (ScanError, KeyError) as exc:
         result['notice'] = str(exc) if isinstance(exc, ScanError) else 'Incomplete response from VirusTotal.'

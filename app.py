@@ -5,7 +5,13 @@ import secrets
 from datetime import timedelta
 from flask import Flask, abort, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
-from scanner import ScanError, scan_url
+from scanner import ScanError, assess_url, scan_url
+
+EXAMPLES = (
+    dict(id='low', label='Quiet link', description='A simple HTTPS address', url='https://library.example/about'),
+    dict(id='medium', label='Look closer', description='HTTP plus account wording', url='http://members.example/login?verify=yes'),
+    dict(id='high', label='Stacked signals', description='Several rules in one link', url='http://bank123.example/login/verify/update/secure/account'),
+)
 
 def create_app(test_config=None):
     app = Flask(__name__, static_folder='public/static', static_url_path='/static')
@@ -64,14 +70,26 @@ def create_app(test_config=None):
         result, error, value = None, None, ''
         if request.method == 'POST':
             value = request.form.get('url', '')
-            if request.form.get('consent') != 'yes':
-                error = 'Confirm that this URL may be submitted to VirusTotal.'
-            else:
-                try:
+            action = request.form.get('action', 'scan')
+            try:
+                if action == 'example':
+                    example = next((item for item in EXAMPLES if item['id'] == request.form.get('example')), None)
+                    if example is None:
+                        raise ScanError('Choose one of the available examples.')
+                    value = example['url']
+                elif action not in ('scan', 'local'):
+                    raise ScanError('Choose a valid analysis action.')
+                if action in ('local', 'example'):
+                    result = assess_url(value)
+                    result.update(stats=None, analysis_mode='demo' if action == 'example' else 'local',
+                                  virustotal_status='not_requested', notice='Local analysis only. This URL was not sent to VirusTotal.')
+                else:
+                    if request.form.get('consent') != 'yes':
+                        raise ScanError('Confirm that this URL may be submitted to VirusTotal, or choose Local rules only.')
                     result = scan_url(value)
-                except ScanError as exc:
-                    error = str(exc)
-        return render_template('dashboard.html', result=result, error=error, value=value)
+            except ScanError as exc:
+                error = str(exc)
+        return render_template('dashboard.html', result=result, error=error, value=value, examples=EXAMPLES)
 
     @app.post('/logout')
     def logout():

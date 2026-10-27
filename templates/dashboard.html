@@ -1,2 +1,106 @@
-﻿{% extends 'base.html' %}{% block title %}URL workspace · ThreatLens{% endblock %}
-{% block content %}<main class="dashboard"><p class="eyebrow">ANALYST WORKSPACE / URL INTELLIGENCE</p><h1>Every link has a <span>story.</span></h1><p class="lede">Inspect a URL before you trust it.</p><section class="scan-card"><div class="section-heading"><h2>Investigate a URL</h2><span class="badge">URL SCANNER</span></div>{% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}<form method="post" data-busy="Analyzing… this may take about a minute"><input type="hidden" name="csrf" value="{{ session.csrf }}"><label for="url">Website address</label><div class="scan-input"><input id="url" name="url" value="{{ value }}" placeholder="https://example.com" required maxlength="4096"><button class="primary" type="submit">Analyze URL ↗</button></div><label class="consent"><input type="checkbox" name="consent" value="yes" required> I allow this URL to be sent to VirusTotal. I have removed private tokens and sensitive information.</label><p class="muted small">Without a VirusTotal API key, only local rules run. ThreatLens does not open the submitted site.</p></form></section>{% if result %}<section class="results" aria-live="polite"><div class="score-card {{ result.level }}"><p class="eyebrow">CUSTOM RULES</p><div class="score">{{ result.score }}<span>/100</span></div><h2>{{ result.level|capitalize }} heuristic risk</h2><p class="muted">{{ result.url }}</p><p class="small">A rule score is an indicator, not proof of a scam. Low risk does not guarantee safety.</p></div><div class="scan-card"><h2>Why this score?</h2><p class="muted small">Low: 0–39 · Medium: 40–69 · High: 70–100</p>{% for reason in result.reasons %}<div class="reason"><span>{{ reason.label }}</span><b>+{{ reason.points }}</b></div>{% else %}<p class="muted">No custom rule signals found.</p>{% endfor %}</div></section><section class="scan-card"><div class="section-heading"><h2>VirusTotal verdicts</h2><span class="badge">{% if result.stats is not none %}ANALYSIS COMPLETE{% else %}UNAVAILABLE{% endif %}</span></div>{% if result.notice %}<div class="alert" role="status">{{ result.notice }}</div>{% else %}<div class="stats">{% for key in ['malicious', 'suspicious', 'harmless', 'undetected'] %}<div><b>{{ result.stats.get(key, 0) }}</b><span>{{ key|capitalize }}</span></div>{% endfor %}</div><p class="small muted">Vendor verdicts are shown separately from your custom score. Undetected means no opinion, not safe.</p>{% endif %}</section>{% else %}<div class="empty-state"><span>◎</span><h2>A little scrutiny goes a long way.</h2><p class="muted">Your score, rule explanations, and vendor verdicts will appear here.</p></div>{% endif %}</main>{% endblock %}
+﻿{% extends 'base.html' %}
+{% block title %}Link Detective · ThreatLens{% endblock %}
+{% block content %}
+<main class="dashboard">
+  <p class="eyebrow">ANALYST WORKSPACE / LINK DETECTIVE</p>
+  <h1>Every link has a <span>story.</span></h1>
+  <p class="lede">Pull it apart. Understand the signals. Explore what changes the score.</p>
+
+  <section class="demo-section" aria-labelledby="demo-heading">
+    <div class="section-heading"><h2 id="demo-heading">Start with a case</h2><span class="badge">LOCAL DEMO</span></div>
+    <p class="muted small">Fictional .example links. No site visits or VirusTotal requests.</p>
+    <form method="post" class="example-grid" data-busy="Opening case…">
+      <input type="hidden" name="csrf" value="{{ session.csrf }}">
+      <input type="hidden" name="action" value="example">
+      {% for example in examples %}
+      <button type="submit" name="example" value="{{ example.id }}" class="example-card">
+        <span class="case-label">CASE {{ '%02d'|format(loop.index) }} / {{ example.id|upper }} SCORE</span>
+        <strong>{{ example.label }} <span aria-hidden="true">↗</span></strong>
+        <span class="muted small">{{ example.description }}</span>
+      </button>
+      {% endfor %}
+    </form>
+  </section>
+
+  <section class="scan-card" aria-labelledby="scan-heading">
+    <div class="section-heading"><h2 id="scan-heading">Investigate a URL</h2><span class="badge">URL SCANNER</span></div>
+    {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" data-busy="Analyzing… this may take about a minute">
+      <input type="hidden" name="csrf" value="{{ session.csrf }}">
+      <label for="url">Website address</label>
+      <input id="url" name="url" value="{{ value }}" placeholder="https://example.com" required maxlength="4096" aria-describedby="scan-help">
+      <label class="consent"><input type="checkbox" name="consent" value="yes"> I allow this URL to be sent to VirusTotal. I have removed private tokens and sensitive information.</label>
+      <div class="scan-actions">
+        <button class="primary" type="submit" name="action" value="scan">Analyze with VirusTotal ↗</button>
+        <button class="secondary" type="submit" name="action" value="local" data-busy="Applying local rules…">Local rules only</button>
+      </div>
+      <p id="scan-help" class="muted small">Consent is needed only for VirusTotal. Without an API key, custom rules still run. ThreatLens does not open the submitted site.</p>
+    </form>
+  </section>
+
+  {% if result %}
+  <div class="analysis-heading">
+    <div><p class="eyebrow">CASE FINDINGS</p><p class="muted small">{{ 'Demo example' if result.analysis_mode == 'demo' else 'Local analysis' if result.analysis_mode == 'local' else 'URL analysis' }} · <time datetime="{{ result.analyzed_at }}">{{ result.analyzed_at }}</time> (UTC)</p></div>
+    <button class="secondary" id="download-report" type="button" hidden>Download JSON report ↓</button>
+  </div>
+  <section class="results" aria-label="Original analysis">
+    <div class="score-card {{ result.level }}">
+      <p class="eyebrow">ORIGINAL CUSTOM SCORE</p>
+      <div class="score">{{ result.score }}<span>/100</span></div>
+      <h2>{{ result.level|capitalize }} heuristic risk</h2>
+      <p class="muted">{{ result.url }}</p>
+      <p class="small">A rule score is an indicator, not proof of a scam. Low risk does not guarantee safety.</p>
+    </div>
+    <div class="scan-card">
+      <h2>Why this score?</h2><p class="muted small">Low: 0–39 · Medium: 40–69 · High: 70–100</p>
+      {% for reason in result.reasons %}
+      <div class="reason"><div><span>{{ reason.label }}</span><p class="muted small">{{ reason.explanation }}</p></div><b>+{{ reason.points }}</b></div>
+      {% else %}<p class="muted">No custom rule signals found.</p>{% endfor %}
+    </div>
+  </section>
+
+  <section class="scan-card" aria-labelledby="anatomy-heading">
+    <div class="section-heading"><h2 id="anatomy-heading">URL anatomy</h2><span class="badge">READ THE PARTS</span></div>
+    <p class="muted small">Highlighted parts contribute to a triggered rule. The hostname tells you which server the URL names; branding elsewhere can be misleading.</p>
+    <dl class="anatomy">
+      {% for key, label in [('protocol', 'Protocol'), ('hostname', 'Hostname'), ('port', 'Explicit port'), ('path', 'Path'), ('query', 'Query')] %}
+      {% set matching = namespace(signals=[]) %}
+      {% for reason in result.reasons %}{% if key in reason.components %}{% set matching.signals = matching.signals + [reason] %}{% endif %}{% endfor %}
+      <div class="anatomy-part{% if matching.signals %} signaled{% endif %}">
+        <dt>{{ label }}{% if matching.signals %}<span class="signal-label">RULE SIGNAL</span>{% endif %}</dt>
+        <dd><code>{{ result.components[key] if result.components[key] is not none and result.components[key] != '' else 'Not specified' }}</code>{% if matching.signals %}<ul class="component-signals">{% for signal in matching.signals %}<li>{{ signal.label }}</li>{% endfor %}</ul>{% endif %}</dd>
+      </div>
+      {% endfor %}
+    </dl>
+  </section>
+
+  <section class="scan-card simulator" id="simulator" aria-labelledby="simulation-heading" hidden>
+    <div class="section-heading"><h2 id="simulation-heading">What changes the score?</h2><span class="badge">WHAT-IF SIMULATION</span></div>
+    <p class="muted small">Uncheck a rule to exclude its points from this simulation. This does not change the URL, original analysis, or vendor verdicts. A lower simulated score does not make the link safer.</p>
+    <div class="simulation-layout">
+      <fieldset id="simulation-rules"><legend class="small muted">Include these triggered rules</legend>
+        {% for reason in result.reasons %}<label class="simulation-rule"><input type="checkbox" value="{{ reason.id }}" checked><span>{{ reason.label }}</span><b>+{{ reason.points }}</b></label>{% else %}<p class="muted small">No triggered rules to toggle. Try another case.</p>{% endfor %}
+      </fieldset>
+      <div class="simulation-summary {{ result.level }}" id="simulation-summary">
+        <p class="eyebrow">SIMULATED SCORE</p>
+        <div class="score"><span id="simulation-score">{{ result.score }}</span><span>/100</span></div>
+        <p id="simulation-verdict" role="status" aria-live="polite" aria-atomic="true">{{ result.score }}/100 · {{ result.level|capitalize }} simulated risk</p>
+        <p class="muted small">Sum of included rules, capped at 100.</p>
+        <button id="reset-simulation" class="secondary" type="button">Reset all rules</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="scan-card" aria-labelledby="vendor-heading">
+    <div class="section-heading"><h2 id="vendor-heading">VirusTotal verdicts</h2><span class="badge">{% if result.stats is not none %}ANALYSIS COMPLETE{% elif result.virustotal_status == 'not_requested' %}NOT REQUESTED{% else %}UNAVAILABLE{% endif %}</span></div>
+    {% if result.notice %}<div class="alert" role="status">{{ result.notice }}</div>
+    {% else %}<div class="stats">{% for key in ['malicious', 'suspicious', 'harmless', 'undetected'] %}<div><b>{{ result.stats.get(key, 0) }}</b><span>{{ key|capitalize }}</span></div>{% endfor %}</div><p class="small muted">Vendor verdicts are separate from custom scores and simulations. Undetected means no opinion, not safe.</p>{% endif %}
+  </section>
+  <p class="muted small" id="report-status" role="status"></p>
+  <noscript><p class="muted small">Enable JavaScript for the what-if simulator and JSON downloads. Analysis and examples work without it.</p></noscript>
+  <div id="analysis-data" data-analysis="{{ result|tojson|forceescape }}" hidden></div>
+  {% else %}
+  <div class="empty-state"><span aria-hidden="true">◎</span><h2>A little scrutiny goes a long way.</h2><p class="muted">Choose a case or enter a URL to reveal its anatomy, score, and signals.</p></div>
+  {% endif %}
+</main>
+{% endblock %}
